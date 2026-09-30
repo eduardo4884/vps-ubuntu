@@ -1,0 +1,88 @@
+name: Windows - RDP via Tailscale
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    name: Sessão RDP
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+
+      - name: Restaurar ficheiros
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-backup
+          path: C:\workspace
+        continue-on-error: true
+
+      - name: Criar pasta de trabalho
+        run: New-Item -ItemType Directory -Force -Path C:\workspace | Out-Null
+
+      - name: Ativar RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "UserAuthentication" -Value 0
+          Write-Host "RDP ativado."
+
+      - name: Criar utilizador RDP
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        run: |
+          net user rdpuser "$env:RDP_PASSWORD" /add
+          net localgroup Administrators rdpuser /add
+          net localgroup "Remote Desktop Users" rdpuser /add
+          Write-Host "Utilizador criado."
+
+      - name: Instalar Tailscale
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" `
+            -OutFile "tailscale-setup.exe"
+          Start-Process -FilePath "tailscale-setup.exe" -ArgumentList "/S" -Wait
+          Start-Sleep -Seconds 10
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTHKEY --accept-routes
+          Start-Sleep -Seconds 10
+          Write-Host "Tailscale instalado e conectado."
+
+      - name: Mostrar endereço RDP
+        run: |
+          $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          $ip = $ip.Trim()
+          Write-Host "==============================="
+          Write-Host "  ENDEREÇO : $ip"
+          Write-Host "  USER     : rdpuser"
+          Write-Host "==============================="
+
+      - name: Manter sessão ativa
+        run: |
+          $inicio = Get-Date
+          $limiteMinutos = 330
+
+          while ($true) {
+            $decorrido = [math]::Round(((Get-Date) - $inicio).TotalMinutes, 1)
+            $restante = [math]::Round($limiteMinutos - $decorrido)
+
+            if ($decorrido -ge $limiteMinutos) {
+              Write-Host "=== Limite atingido. A fazer backup... ==="
+              break
+            }
+
+            Write-Host "[$decorrido min] Sessão ativa | Restam $restante min"
+            Start-Sleep -Seconds 300
+          }
+
+      - name: Backup dos ficheiros
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-backup
+          path: C:\workspace
+          retention-days: 90
+          overwrite: true
