@@ -34,9 +34,10 @@ jobs:
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
-          net user rdpuser "$env:RDP_PASSWORD" /add
-          net localgroup Administrators rdpuser /add
-          net localgroup "Remote Desktop Users" rdpuser /add
+          $senha = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
+          New-LocalUser -Name "rdpuser" -Password $senha -PasswordNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "rdpuser"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "rdpuser"
           Write-Host "Utilizador criado."
 
       - name: Instalar Tailscale
